@@ -337,7 +337,7 @@ class DecompilationEnv(gym.Env):
     ACTION_PERM_REORDER_DECLS = 6
     ACTION_PERM_INLINE = 7
     ACTION_PERM_ADD_MASK = 8
-    ACTION_PERM_SPLIT_ASSIGNMENT = 9
+    ACTION_PERM_COMMUTATIVE = 9
     ACTION_PERM_CAST_SIMPLE = 10
     ACTION_PERM_RANDOMIZE_FUNCTION_TYPE = 11
     ACTION_PERM_MAX = 12
@@ -352,6 +352,7 @@ class DecompilationEnv(gym.Env):
         self.current_code = random.randint(0, len(training_data) - 1)
         self.code_state : dict[int, dict[str, Any]] = {}
         self.initial_score = 0
+        self.n_steps_since_last_reset = 0
 
     def step(self, action):
         print('action', action)
@@ -391,7 +392,7 @@ class DecompilationEnv(gym.Env):
     "perm_randomize_internal_type": 0,
     "perm_randomize_external_type": 0,
     "perm_randomize_function_type": 100 if action == DecompilationEnv.ACTION_PERM_RANDOMIZE_FUNCTION_TYPE else 0,
-    "perm_split_assignment": 100 if action == DecompilationEnv.ACTION_PERM_SPLIT_ASSIGNMENT else 0,
+    "perm_split_assignment": 0,
     "perm_sameline": 0,
     "perm_ins_block": 0,
     "perm_struct_ref": 100 if action == DecompilationEnv.ACTION_PERM_STRUCT_REF else 0,
@@ -400,7 +401,7 @@ class DecompilationEnv(gym.Env):
     "perm_mult_zero": 0,
     "perm_dummy_comma_expr": 0,
     "perm_add_self_assignment": 0,
-    "perm_commutative": 0,
+    "perm_commutative": 100 if action == DecompilationEnv.ACTION_PERM_COMMUTATIVE else 0,
     "perm_add_sub": 0,
     "perm_inequalities": 0,
     "perm_compound_assignment": 0,
@@ -418,12 +419,14 @@ class DecompilationEnv(gym.Env):
         diff_result = compile_and_update(prev_score, diff_label, platform, "", permutation, target_s, compiler, compiler_flags, target_o)
         json.dump(diff_result, open('tmp.json','w'),indent=4)
         self.code_state[self.current_code]["prev_score"] = diff_result["score"]
-        self.code_state[self.current_code]["last_permutation"] = permutation if diff_result["score"] < prev_score and diff_result["score"] < self.initial_score else code_c
+        self.code_state[self.current_code]["initial_score_minus_prev_score"] = self.initial_score - diff_result["score"]
+        self.code_state[self.current_code]["last_permutation"] = permutation if (diff_result["score"] < prev_score and diff_result["score"] < self.initial_score) else code_c
         self.code_state[self.current_code]["cur_permutation"] = permutation
         reward = diff_result["reward"]
         diff_result["last_permutation"] = permutation
         open("tmp.c", 'w').write(permutation)
-        return np.array([diff_result["score"]]).astype(np.float32), reward, diff_result["score"] <= (self.initial_score / 3) and diff_result['score'] >= 0, False, diff_result
+        self.n_steps_since_last_reset += 1
+        return np.array([diff_result["score"]]).astype(np.float32), reward, (diff_result["score"] <= (self.initial_score / 3) and diff_result['score'] >= 0) or self.n_steps_since_last_reset == 1000, False, diff_result
 
     def render(self, mode='console'):
         pass
@@ -434,6 +437,7 @@ class DecompilationEnv(gym.Env):
     def reset(self):
         self.current_code = random.randint(0, len(self.training_data) - 1)
         diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o = self.training_data[self.current_code]
+        self.n_steps_since_last_reset = 0
         if ("extern ? " in code_c):
             return self.reset()
         return np.array([compile_and_update(0, diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o)["score"]]).astype(np.float32), None
@@ -453,7 +457,8 @@ class TensorboardCallback(BaseCallback):
         env = self.env.envs[0]
         try:
             self.logger.record("cur_permutation", env.code_state[env.current_code]["cur_permutation"])
-            self.logger.record("prev_score", env.code_state[env.current_code]["prev_score"])
+            self.logger.record("score", env.code_state[env.current_code]["prev_score"])
+            self.logger.record("score_comparison_intensity", env.code_state[env.current_code]["initial_score_minus_prev_score"])
             self.logger.dump(step=self.num_timesteps)
         except:
             pass
