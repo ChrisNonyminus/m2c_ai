@@ -328,13 +328,25 @@ import decomp_permuter.src.helpers as perm_helpers
 
 
 class DecompilationEnv(gym.Env):
+    ACTION_PERM_TEMP_FOR_EXPR = 0
+    ACTION_PERM_EXPAND_EXPR = 1
+    ACTION_PERM_CONDITION = 2
+    ACTION_PERM_REMOVE_AST = 3
+    ACTION_PERM_REFER_TO_VAR = 4
+    ACTION_PERM_COMPOUND_ASSIGNMENT = 5
+    ACTION_PERM_REORDER_DECLS = 6
+    ACTION_PERM_MAX = 7
+
+
+
     def __init__(self, training_data): # training_data is a tuple list of (diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o)
         super(DecompilationEnv, self).__init__()
         self.training_data = training_data
-        self.action_space = spaces.Discrete(10000)
+        self.action_space = spaces.Discrete(DecompilationEnv.ACTION_PERM_MAX)
         self.observation_space = spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32)
         self.current_code = random.randint(0, len(training_data) - 1)
         self.code_state : dict[int, dict[str, Any]] = {}
+        self.initial_score = 0
 
     def step(self, action):
         print('action', action)
@@ -350,6 +362,7 @@ class DecompilationEnv(gym.Env):
             if base_compilation['reward'] == -1: # compilation failed
                 return np.array([0]), 0, True, False, {}
             prev_score = base_compilation["score"]
+            self.initial_score = prev_score
             code_c = ctx_c + "\n\n" + code_c
         with open("code.c", "w") as f:
             f.write(code_c)
@@ -361,51 +374,38 @@ class DecompilationEnv(gym.Env):
         eval_state = perm.EvalState()
         try:
             cand = candidate.Candidate.from_source(code_perm.evaluate(random.randint(0, code_perm.perm_count), eval_state), eval_state, diff_label,{
-                "perm_add_mask": 0.5,
-                "perm_xor_zero": 0.5,
-                "perm_refer_to_var": 0.5,
-                "perm_float_literal": 0.5,
-                "perm_sameline": 0.5,
-                "perm_empty_stmt": 0.5,
-                "perm_condition": 0.5,
-                "perm_mult_zero": 0.5,
-                "perm_dummy_comma_expr": 0.5,
-                "perm_add_self_assignment": 0.5,
-                "perm_duplicate_assignment": 0.5,
-                "perm_pad_var_decl": 0.5,
-
-    "perm_temp_for_expr": 100,
-    "perm_expand_expr": 20,
-    "perm_reorder_stmts": 10,
-    "perm_reorder_decls": 10,
-    "perm_add_mask": 15,
-    "perm_xor_zero": 10,
-    "perm_cast_simple": 10,
-    "perm_refer_to_var": 10,
-    "perm_float_literal": 3,
-    "perm_randomize_internal_type": 10,
-    "perm_randomize_external_type": 5,
-    "perm_randomize_function_type": 5,
-    "perm_split_assignment": 10,
-    "perm_sameline": 3,
-    "perm_ins_block": 10,
-    "perm_struct_ref": 10,
-    "perm_empty_stmt": 10,
-    "perm_condition": 10,
-    "perm_mult_zero": 5,
-    "perm_dummy_comma_expr": 5,
-    "perm_add_self_assignment": 5,
-    "perm_commutative": 5,
-    "perm_add_sub": 5,
-    "perm_inequalities": 5,
-    "perm_compound_assignment": 5,
-    "perm_remove_ast": 5,
-    "perm_duplicate_assignment": 5,
-    "perm_chain_assignment": 5,
-    "perm_long_chain_assignment": 3,
-    "perm_pad_var_decl": 1,
-    "perm_inline": 10,
-            },action)
+    "perm_temp_for_expr": 100 if action == DecompilationEnv.ACTION_PERM_TEMP_FOR_EXPR else 0,
+    "perm_expand_expr": 100 if action == DecompilationEnv.ACTION_PERM_EXPAND_EXPR else 0,
+    "perm_reorder_stmts": 0,
+    "perm_reorder_decls": 100 if action == DecompilationEnv.ACTION_PERM_REORDER_DECLS else 0,
+    "perm_add_mask": 0,
+    "perm_xor_zero": 0,
+    "perm_cast_simple": 0,
+    "perm_refer_to_var": 100 if action == DecompilationEnv.ACTION_PERM_REFER_TO_VAR else 0,
+    "perm_float_literal": 0,
+    "perm_randomize_internal_type": 0,
+    "perm_randomize_external_type": 0,
+    "perm_randomize_function_type": 0,
+    "perm_split_assignment": 0,
+    "perm_sameline": 0,
+    "perm_ins_block": 0,
+    "perm_struct_ref": 0,
+    "perm_empty_stmt": 0,
+    "perm_condition": 100 if action == DecompilationEnv.ACTION_PERM_CONDITION else 0,
+    "perm_mult_zero": 0,
+    "perm_dummy_comma_expr": 0,
+    "perm_add_self_assignment": 0,
+    "perm_commutative": 0,
+    "perm_add_sub": 0,
+    "perm_inequalities": 0,
+    "perm_compound_assignment": 100 if action == DecompilationEnv.ACTION_PERM_COMPOUND_ASSIGNMENT else 0,
+    "perm_remove_ast": 100 if action == DecompilationEnv.ACTION_PERM_REMOVE_AST else 0,
+    "perm_duplicate_assignment": 0,
+    "perm_chain_assignment": 0, 
+    "perm_long_chain_assignment": 0,
+    "perm_pad_var_decl": 0,
+    "perm_inline": 0,
+            },random.randint(0, 1000000))
         except:
             return np.array([prev_score]).astype(np.float32), 0, True, False, {}
         cand.randomize_ast()
@@ -413,7 +413,7 @@ class DecompilationEnv(gym.Env):
         diff_result = compile_and_update(prev_score, diff_label, platform, "", permutation, target_s, compiler, compiler_flags, target_o)
         json.dump(diff_result, open('tmp.json','w'),indent=4)
         self.code_state[self.current_code]["prev_score"] = diff_result["score"]
-        self.code_state[self.current_code]["last_permutation"] = code_c
+        self.code_state[self.current_code]["last_permutation"] = permutation if diff_result["score"] < prev_score and diff_result["score"] < self.initial_score else code_c
         self.code_state[self.current_code]["cur_permutation"] = permutation
         reward = diff_result["reward"]
         diff_result["last_permutation"] = permutation
