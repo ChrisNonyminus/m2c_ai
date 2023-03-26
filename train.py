@@ -427,6 +427,9 @@ class DecompilationEnv(gym.Env):
         self.code_state[self.current_code]["last_permutation"] = permutation if (diff_result["score"] < prev_score and diff_result["score"] < self.best_score) else code_c
         self.code_state[self.current_code]["cur_permutation"] = permutation
         reward = diff_result["reward"] + (self.code_state[self.current_code]["strength"] - self.strength_total) * 0.1
+        if diff_result["score"] <= 100:
+            reward += 1000
+            self.code_state[self.current_code]["strength"] = 1000
         diff_result["last_permutation"] = permutation
         open("tmp.c", 'w').write(permutation)
         self.n_steps_since_last_reset += 1
