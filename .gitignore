@@ -2,3 +2,4 @@
 ppo_decomp_tensorboard/
 *.c
 *.json
+*.zip

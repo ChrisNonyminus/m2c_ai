@@ -12,11 +12,11 @@ from compilers.compiler_defs import *
 import asmdiffer.diff as asmdiffer
 
 
-def scrape_scratches(url = "https://decomp.me/api/scratch", scratches_list : list[tuple] = [], recursion_depth = 500):
+def scrape_scratches(url = "https://decomp.me/api/scratch", scratches_list : list[tuple] = [], recursion_depth = 768):
     scratches = jsonpickle.decode(requests.get(url).text)
     next_url = scratches['next']
     for result in scratches["results"]:
-        if result['platform'] in ['n64', 'psx'] and (result['score'] >= 200 and result['score'] < 500):
+        if result['platform'] in ['n64', 'psx'] and (result['score'] >= 300 and result['score'] < 1000):
             compiler = result['compiler']
             compiler_flags = jsonpickle.decode(requests.get("https://decomp.me/api/scratch" + "/" + result['slug']).text)['compiler_flags']
             with open("zips/" + result['slug'] + ".zip", 'wb') as f:
@@ -333,9 +333,14 @@ class DecompilationEnv(gym.Env):
     ACTION_PERM_CONDITION = 2
     ACTION_PERM_REMOVE_AST = 3
     ACTION_PERM_REFER_TO_VAR = 4
-    ACTION_PERM_COMPOUND_ASSIGNMENT = 5
+    ACTION_PERM_STRUCT_REF = 5
     ACTION_PERM_REORDER_DECLS = 6
-    ACTION_PERM_MAX = 7
+    ACTION_PERM_INLINE = 7
+    ACTION_PERM_ADD_MASK = 8
+    ACTION_PERM_SPLIT_ASSIGNMENT = 9
+    ACTION_PERM_CAST_SIMPLE = 10
+    ACTION_PERM_RANDOMIZE_FUNCTION_TYPE = 11
+    ACTION_PERM_MAX = 12
 
 
 
@@ -378,18 +383,18 @@ class DecompilationEnv(gym.Env):
     "perm_expand_expr": 100 if action == DecompilationEnv.ACTION_PERM_EXPAND_EXPR else 0,
     "perm_reorder_stmts": 0,
     "perm_reorder_decls": 100 if action == DecompilationEnv.ACTION_PERM_REORDER_DECLS else 0,
-    "perm_add_mask": 0,
+    "perm_add_mask": 100 if action == DecompilationEnv.ACTION_PERM_ADD_MASK else 0,
     "perm_xor_zero": 0,
-    "perm_cast_simple": 0,
+    "perm_cast_simple": 100 if action == DecompilationEnv.ACTION_PERM_CAST_SIMPLE else 0,
     "perm_refer_to_var": 100 if action == DecompilationEnv.ACTION_PERM_REFER_TO_VAR else 0,
     "perm_float_literal": 0,
     "perm_randomize_internal_type": 0,
     "perm_randomize_external_type": 0,
-    "perm_randomize_function_type": 0,
-    "perm_split_assignment": 0,
+    "perm_randomize_function_type": 100 if action == DecompilationEnv.ACTION_PERM_RANDOMIZE_FUNCTION_TYPE else 0,
+    "perm_split_assignment": 100 if action == DecompilationEnv.ACTION_PERM_SPLIT_ASSIGNMENT else 0,
     "perm_sameline": 0,
     "perm_ins_block": 0,
-    "perm_struct_ref": 0,
+    "perm_struct_ref": 100 if action == DecompilationEnv.ACTION_PERM_STRUCT_REF else 0,
     "perm_empty_stmt": 0,
     "perm_condition": 100 if action == DecompilationEnv.ACTION_PERM_CONDITION else 0,
     "perm_mult_zero": 0,
@@ -398,13 +403,13 @@ class DecompilationEnv(gym.Env):
     "perm_commutative": 0,
     "perm_add_sub": 0,
     "perm_inequalities": 0,
-    "perm_compound_assignment": 100 if action == DecompilationEnv.ACTION_PERM_COMPOUND_ASSIGNMENT else 0,
+    "perm_compound_assignment": 0,
     "perm_remove_ast": 100 if action == DecompilationEnv.ACTION_PERM_REMOVE_AST else 0,
     "perm_duplicate_assignment": 0,
     "perm_chain_assignment": 0, 
     "perm_long_chain_assignment": 0,
     "perm_pad_var_decl": 0,
-    "perm_inline": 0,
+    "perm_inline": 100 if action == DecompilationEnv.ACTION_PERM_INLINE else 0,
             },random.randint(0, 1000000))
         except:
             return np.array([prev_score]).astype(np.float32), 0, True, False, {}
@@ -418,7 +423,7 @@ class DecompilationEnv(gym.Env):
         reward = diff_result["reward"]
         diff_result["last_permutation"] = permutation
         open("tmp.c", 'w').write(permutation)
-        return np.array([diff_result["score"]]).astype(np.float32), reward, diff_result["score"] < 100 and diff_result['score'] >= 0, False, diff_result
+        return np.array([diff_result["score"]]).astype(np.float32), reward, diff_result["score"] <= (self.initial_score / 3) and diff_result['score'] >= 0, False, diff_result
 
     def render(self, mode='console'):
         pass
@@ -452,7 +457,9 @@ class TensorboardCallback(BaseCallback):
             self.logger.dump(step=self.num_timesteps)
         except:
             pass
-
+        # save model every 1000 steps
+        if self.num_timesteps % 1000 == 0:
+            self.model.save("ppo_decomp")
         return True
     
 
@@ -466,8 +473,8 @@ def test_env():
     model = PPO('MlpPolicy', env, verbose=1,
                 tensorboard_log="./ppo_decomp_tensorboard/",
                 
-    ).learn(5000, callback=TensorboardCallback(env))
-
+    ).learn(50000, callback=TensorboardCallback(env))
+    model.save("ppo_decomp")
     env.render()
 
     for step in range(1000):
