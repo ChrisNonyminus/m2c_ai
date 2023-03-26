@@ -443,7 +443,7 @@ class DecompilationEnv(gym.Env):
 
     def reset(self):
         if self.n_steps > 0:
-            if "strength" not in self.code_state[self.current_code]:
+            if self.current_code not in self.code_state or "strength" not in self.code_state[self.current_code]:
                 #self.strength_total = 0
                 pass
             else:
