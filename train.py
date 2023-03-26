@@ -302,10 +302,11 @@ def compile_and_update(prev_score, diff_label, platform, ctx_c, code_c, target_s
         print(e)
         if initial:
             raise e
-        return {
-            "score": 10000,
-            "reward": prev_score - 10000,
-        }
+        else:
+            return {
+                "score": 10000,
+                "reward": prev_score - 10000,
+            }
     
     diff = diff_compilation(diff_label, platform, target_o, compilation)
     return update_score(prev_score, diff)
