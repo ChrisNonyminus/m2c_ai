@@ -416,9 +416,9 @@ class DecompilationEnv(gym.Env):
     "perm_pad_var_decl": 0,
     "perm_inline": 100 if action == DecompilationEnv.ACTION_PERM_INLINE else 0,
             },random.randint(0, 1000000))
+            cand.randomize_ast()
         except:
             return np.array([prev_score]).astype(np.float32), 0, True, False, {}
-        cand.randomize_ast()
         permutation : str = cand.get_source()
         diff_result = compile_and_update(prev_score, diff_label, platform, "", permutation, target_s, compiler, compiler_flags, target_o)
         json.dump(diff_result, open('tmp.json','w'),indent=4)
