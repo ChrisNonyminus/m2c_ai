@@ -1,0 +1,12 @@
+git+https://github.com/DLR-RM/stable-baselines3@feat/gymnasium-support#egg=stable_baselines3[extra,tests,docs]
+git+https://github.com/Stable-Baselines-Team/stable-baselines3-contrib@feat/gymnasium-support
+colorama
+watchdog
+levenshtein
+cxxfilt
+clang
+pycparser
+requests
+jsonpickle
+pickle
+

@@ -1,0 +1,7 @@
+
+[submodule "decomp_permuter"]
+	path = decomp_permuter
+	url = https://github.com/simonlindholm/decomp-permuter.git
+[submodule "asmdiffer"]
+	path = asmdiffer
+	url = https://github.com/simonlindholm/asm-differ.git

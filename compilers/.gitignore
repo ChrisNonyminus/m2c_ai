@@ -1,0 +1,4 @@
+*
+!.gitignore
+!download.py
+!compiler_defs.py
