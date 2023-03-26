@@ -294,15 +294,17 @@ def update_score(prev_score, diff: DiffResult) -> None:
     diff["score"] = score
     return diff
 
-def compile_and_update(prev_score, diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o):
+def compile_and_update(prev_score, diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o, initial=False):
     score = prev_score
     try:
         compilation = compile_scratch(diff_label, ctx_c, code_c, compiler, compiler_flags)
     except CompilationError as e:
         print(e)
+        if initial:
+            raise e
         return {
-            "score": 1000,
-            "reward": -1
+            "score": 10000,
+            "reward": prev_score - 10000,
         }
     
     diff = diff_compilation(diff_label, platform, target_o, compilation)
@@ -352,6 +354,7 @@ class DecompilationEnv(gym.Env):
         self.current_code = random.randint(0, len(training_data) - 1)
         self.code_state : dict[int, dict[str, Any]] = {}
         self.initial_score = 0
+        self.best_score = self.initial_score
         self.n_steps_since_last_reset = 0
 
     def step(self, action):
@@ -393,7 +396,7 @@ class DecompilationEnv(gym.Env):
     "perm_randomize_external_type": 0,
     "perm_randomize_function_type": 100 if action == DecompilationEnv.ACTION_PERM_RANDOMIZE_FUNCTION_TYPE else 0,
     "perm_split_assignment": 0,
-    "perm_sameline": 0,
+    "perm_sameline": 1,
     "perm_ins_block": 0,
     "perm_struct_ref": 100 if action == DecompilationEnv.ACTION_PERM_STRUCT_REF else 0,
     "perm_empty_stmt": 0,
@@ -419,13 +422,15 @@ class DecompilationEnv(gym.Env):
         diff_result = compile_and_update(prev_score, diff_label, platform, "", permutation, target_s, compiler, compiler_flags, target_o)
         json.dump(diff_result, open('tmp.json','w'),indent=4)
         self.code_state[self.current_code]["prev_score"] = diff_result["score"]
-        self.code_state[self.current_code]["initial_score_minus_prev_score"] = self.initial_score - diff_result["score"]
-        self.code_state[self.current_code]["last_permutation"] = permutation if (diff_result["score"] < prev_score and diff_result["score"] < self.initial_score) else code_c
+        self.code_state[self.current_code]["strength"] = self.initial_score - diff_result["score"]
+        self.code_state[self.current_code]["last_permutation"] = permutation if (diff_result["score"] < prev_score and diff_result["score"] < self.best_score) else code_c
         self.code_state[self.current_code]["cur_permutation"] = permutation
-        reward = diff_result["reward"]
+        reward = diff_result["reward"] + (self.code_state[self.current_code]["strength"] - self.strength_total) * 0.1
         diff_result["last_permutation"] = permutation
         open("tmp.c", 'w').write(permutation)
         self.n_steps_since_last_reset += 1
+        if diff_result["score"] < self.best_score:
+            self.best_score = diff_result["score"]
         return np.array([diff_result["score"]]).astype(np.float32), reward, (diff_result["score"] <= (self.initial_score / 3) and diff_result['score'] >= 0) or self.n_steps_since_last_reset == 1000, False, diff_result
 
     def render(self, mode='console'):
@@ -435,12 +440,28 @@ class DecompilationEnv(gym.Env):
         pass
 
     def reset(self):
+        if self.current_code in self.code_state:
+            if "strength" not in self.code_state[self.current_code]:
+                #self.strength_total = 0
+                pass
+            else:
+                self.strength_total += self.code_state[self.current_code]["strength"]
+        else:
+            self.strength_total = 0
         self.current_code = random.randint(0, len(self.training_data) - 1)
         diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o = self.training_data[self.current_code]
+        if len(target_o) > 2048:
+            return self.reset()
         self.n_steps_since_last_reset = 0
         if ("extern ? " in code_c):
             return self.reset()
-        return np.array([compile_and_update(0, diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o)["score"]]).astype(np.float32), None
+        try:
+            self.initial_score = compile_and_update(0, diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o, True)["score"]
+        except:
+            return self.reset()
+
+        self.best_score = self.initial_score
+        return np.array([self.initial_score]).astype(np.float32), None
 
 from stable_baselines3.common.callbacks import BaseCallback
 
@@ -458,7 +479,7 @@ class TensorboardCallback(BaseCallback):
         try:
             self.logger.record("cur_permutation", env.code_state[env.current_code]["cur_permutation"])
             self.logger.record("score", env.code_state[env.current_code]["prev_score"])
-            self.logger.record("score_comparison_intensity", env.code_state[env.current_code]["initial_score_minus_prev_score"]) # positive=good, negative=bad
+            self.logger.record("strength", env.strength_total + env.code_state[env.current_code]["strength"]) # positive=good, negative=bad
             self.logger.dump(step=self.num_timesteps)
         except:
             pass
