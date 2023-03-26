@@ -458,7 +458,7 @@ class TensorboardCallback(BaseCallback):
         try:
             self.logger.record("cur_permutation", env.code_state[env.current_code]["cur_permutation"])
             self.logger.record("score", env.code_state[env.current_code]["prev_score"])
-            self.logger.record("score_comparison_intensity", env.code_state[env.current_code]["initial_score_minus_prev_score"])
+            self.logger.record("score_comparison_intensity", env.code_state[env.current_code]["initial_score_minus_prev_score"]) # positive=good, negative=bad
             self.logger.dump(step=self.num_timesteps)
         except:
             pass
