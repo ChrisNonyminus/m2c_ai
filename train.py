@@ -356,6 +356,7 @@ class DecompilationEnv(gym.Env):
         self.initial_score = 0
         self.best_score = self.initial_score
         self.n_steps_since_last_reset = 0
+        self.n_steps = 0
 
     def step(self, action):
         print('action', action)
@@ -431,6 +432,7 @@ class DecompilationEnv(gym.Env):
         self.n_steps_since_last_reset += 1
         if diff_result["score"] < self.best_score:
             self.best_score = diff_result["score"]
+        self.n_steps += 1
         return np.array([diff_result["score"]]).astype(np.float32), reward, (diff_result["score"] <= (self.initial_score / 3) and diff_result['score'] >= 0) or self.n_steps_since_last_reset == 1000, False, diff_result
 
     def render(self, mode='console'):
@@ -440,7 +442,7 @@ class DecompilationEnv(gym.Env):
         pass
 
     def reset(self):
-        if self.current_code in self.code_state:
+        if self.n_steps > 0:
             if "strength" not in self.code_state[self.current_code]:
                 #self.strength_total = 0
                 pass
