@@ -436,7 +436,7 @@ class DecompilationEnv(gym.Env):
         if diff_result["score"] < self.best_score:
             self.best_score = diff_result["score"]
         self.n_steps += 1
-        return np.array([diff_result["score"]]).astype(np.float32), reward, (diff_result["score"] <= (self.initial_score / 3) and diff_result['score'] >= 0) or self.n_steps_since_last_reset == 1000, False, diff_result
+        return np.array([diff_result["score"]]).astype(np.float32), reward, (diff_result["score"] <= (self.initial_score / 3) and diff_result['score'] >= 0) or self.n_steps_since_last_reset == 1000 or (diff_result["score"] <= 100 and diff_result['score'] >= 0), False, diff_result
 
     def render(self, mode='console'):
         pass
