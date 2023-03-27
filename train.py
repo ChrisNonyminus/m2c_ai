@@ -572,17 +572,17 @@ def test_env():
                 
     ).learn(50000, callback=TensorboardCallback(env))
     model.save("ppo_decomp")
-    env.render()
 
-    for step in range(1000):
-        action, _ = model.predict(obs, deterministic=True)
-        print ("Step {}".format(step + 1))
-        obs, reward, done, info = env.step(action)
-        print('obs=', obs, 'reward=', reward, 'done=', done)
-        env.render()
-        if done:
-            print("Function matching")
-            obs = env.reset()
+def continue_training():
+    env = DecompilationEnv(load_pkl())
+
+    obs, _ = env.reset()
+
+    model = PPO.load("ppo_decomp", env=env, verbose=1,
+                tensorboard_log="./ppo_decomp_tensorboard/",
+                
+    ).learn(50000, callback=TensorboardCallback(env))
+    model.save("ppo_decomp")
 
 import argparse
 
@@ -591,7 +591,10 @@ if __name__ == '__main__':
     parser.add_argument('--command', type=str, choices=['train', 'make_pkl', 'download_compilers'])
     args = parser.parse_args()
     if args.command == 'train':
-        test_env()
+        if os.path.exists("ppo_decomp.zip"):
+            continue_training()
+        else:
+            test_env()
     elif args.command == 'make_pkl':
         make_pkl()
     elif args.command == 'download_compilers':
