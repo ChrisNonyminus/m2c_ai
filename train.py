@@ -258,7 +258,7 @@ class DiffWrapper:
             display = asmdiffer.Display(basedump, mydump, config)
         except Exception as e:
             raise DiffError(f"Error running asm-differ: {e}")
-
+        
         try:
             # TODO: It would be nice to get a python object from `run_diff()` to avoid the
             # JSON roundtrip. See https://github.com/simonlindholm/asm-differ/issues/56
@@ -311,6 +311,17 @@ def compile_and_update(prev_score, diff_label, platform, ctx_c, code_c, target_s
     
     diff = diff_compilation(diff_label, platform, target_o, compilation)
     return update_score(prev_score, diff)
+
+def display_diff(diff: DiffResult) -> None:
+    out_file = open("diff.txt", "w")
+    for row in diff["rows"]:
+        if "base" in row:
+            out_file.write(row["base"]['text'][0]["text"] + " " * (64 - len(row["base"]["text"][0]["text"])))
+        else:
+            out_file.write(" " * 64)
+        if "current" in row:
+            out_file.write(row["current"]['text'][0]["text"])
+        out_file.write("\n")
 
 def load_pkl():
     return pickle.load(open("training.pkl", "rb"))
@@ -447,6 +458,7 @@ class DecompilationEnv(gym.Env):
         self.n_steps_since_last_reset += 1
         if diff_result["score"] < self.best_score:
             self.best_score = diff_result["score"]
+        display_diff(diff_result if "rows" in diff_result else {"rows": []})
         self.n_steps += 1
         diff_rows = diff_result["rows"] if "rows" in diff_result else [
             {"base": {"text": [{"text": ""}]}},
@@ -499,6 +511,7 @@ class DecompilationEnv(gym.Env):
                 self.strength_total += self.code_state[self.current_code]["strength"]
         else:
             self.strength_total = 0
+        self.code_state.pop(self.current_code, None)
         self.current_code = random.randint(0, len(self.training_data) - 1)
         diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o = self.training_data[self.current_code]
         if len(target_o) > 2048:
