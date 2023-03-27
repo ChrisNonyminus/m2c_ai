@@ -13,7 +13,7 @@ from compilers.compiler_defs import *
 import asmdiffer.diff as asmdiffer
 
 
-def scrape_scratches(url = "https://decomp.me/api/scratch", scratches_list : list[tuple] = [], recursion_depth = 768):
+def scrape_scratches(url = "https://decomp.me/api/scratch", scratches_list : list[tuple] = [], recursion_depth = 100):
     scratches = jsonpickle.decode(requests.get(url).text)
     next_url = scratches['next']
     for result in scratches["results"]:
@@ -60,7 +60,8 @@ def get_most_recent_slug(url = "https://decomp.me/api/scratch"):
 from diff_wrapper import DiffWrapper
 
 def prepare_dataset():
-    pickle.dump(scrape_scratches(), open("training.pkl", "wb"), load_pkl() if os.path.exists("training.pkl") else [])
+    existing = load_pkl() if os.path.exists("training.pkl") else []
+    pickle.dump(scrape_scratches("https://decomp.me/api/scratch", existing), open("training.pkl", "wb"))
 
 def download_compilers():
     download_n64()
