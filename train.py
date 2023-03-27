@@ -1,3 +1,4 @@
+import hashlib
 import json
 import random
 import gym
@@ -317,7 +318,6 @@ def load_pkl():
 import numpy as np
 from gym import spaces
 from stable_baselines3 import PPO, A2C
-from stable_baselines3.common.vec_env import DummyVecEnv
 import clang
 import pycparser
 import decomp_permuter.src.perm.perm as perm
@@ -351,7 +351,15 @@ class DecompilationEnv(gym.Env):
         super(DecompilationEnv, self).__init__()
         self.training_data = training_data
         self.action_space = spaces.Discrete(DecompilationEnv.ACTION_PERM_MAX)
-        self.observation_space = spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32)
+        # values we need to observe:
+        # - current score
+        # - current permutation (source code)
+        # base (row["base"]["text"]) vs current (row["base"]["text"]) for each row in diff_result["rows"]
+        self.observation_space = spaces.Dict({
+            "score": spaces.Box(low=0, high=100000, shape=(1,), dtype=np.float32),
+            "code": spaces.Box(low=0, high=100000, shape=(131072,), dtype=np.float32),
+            "diff": spaces.Box(low=0, high=100000, shape=(8192,), dtype=np.float32),
+        })
         self.current_code = random.randint(0, len(training_data) - 1)
         self.code_state : dict[int, dict[str, Any]] = {}
         self.initial_score = 0
@@ -362,6 +370,7 @@ class DecompilationEnv(gym.Env):
     def step(self, action):
         print('action', action)
         diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o = self.training_data[self.current_code]
+        observation_space = self.observation_space
         # permute the code
         if self.current_code in self.code_state:
             prev_score = self.code_state[self.current_code]["prev_score"]
@@ -371,7 +380,7 @@ class DecompilationEnv(gym.Env):
             self.code_state[self.current_code] = {}
             base_compilation = compile_and_update(0, diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o)
             if base_compilation['reward'] == -1: # compilation failed
-                return np.array([0]), 0, True, False, {}
+                return {}, 0, True, False, {}
             prev_score = base_compilation["score"]
             self.initial_score = prev_score
             code_c = ctx_c + "\n\n" + code_c
@@ -380,7 +389,7 @@ class DecompilationEnv(gym.Env):
             try:
                 code_c = pycparser.preprocess_file("code.c", cpp_path="cpp", cpp_args=["-E", "-P", "-w"])
             except:
-                return np.array([prev_score]), 0, True, False, {}
+                return {}, 0, True, False, {}
         code_perm = parse.perm_parse(code_c)
         eval_state = perm.EvalState()
         try:
@@ -419,7 +428,7 @@ class DecompilationEnv(gym.Env):
             },random.randint(0, 1000000))
             cand.randomize_ast()
         except:
-            return np.array([prev_score]).astype(np.float32), 0, True, False, {}
+            return {}, 0, True, False, {}
         permutation : str = cand.get_source()
         diff_result = compile_and_update(prev_score, diff_label, platform, "", permutation, target_s, compiler, compiler_flags, target_o)
         json.dump(diff_result, open('tmp.json','w'),indent=4)
@@ -437,7 +446,30 @@ class DecompilationEnv(gym.Env):
         if diff_result["score"] < self.best_score:
             self.best_score = diff_result["score"]
         self.n_steps += 1
-        return np.array([diff_result["score"]]).astype(np.float32), reward, (diff_result["score"] <= (self.initial_score / 3) and diff_result['score'] >= 0) or self.n_steps_since_last_reset == 1000 or (diff_result["score"] <= 100 and diff_result['score'] >= 0), False, diff_result
+        diff_rows = diff_result["rows"] if "rows" in diff_result else [
+            {"base": {"text": [{"text": ""}]}},
+            {"current": {"text": [{"text": "CANNOT COMPILE"}]}},
+        ]
+        for row in diff_rows:
+            if "base" not in row:
+                row["base"] = {"text": [{"text": ""}]}
+            if "current" not in row:
+                row["current"] = {"text": [{"text": ""}]}
+        diff_base_rows = [row["base"]["text"][0]['text'] for row in diff_rows]
+        diff_current_rows = [row["current"]["text"][0]['text'] for row in diff_rows]
+        diff_rows = list((diff_base_rows, diff_current_rows))
+        diff_rows_hash_diff_per_row = [hashlib.sha256((row[0].strip().encode("utf-8"))) == hashlib.sha256((row[1].strip().encode("utf-8"))) for row in diff_rows]
+        # resize the permutation so that when we convert it to a numpy array it is the same shape as (131072,)
+        permutation = permutation + " " * (131072 - len(permutation))
+        # do the same for the diff_rows_hash_diff_per_row
+        diff_rows_hash_diff_per_row = diff_rows_hash_diff_per_row + [True] * (8192 - len(diff_rows_hash_diff_per_row))
+
+        return {
+            "score": np.array([diff_result["score"]]),
+            "code": np.fromstring(permutation, dtype=np.uint8),
+            "diff": np.fromiter(diff_rows_hash_diff_per_row, dtype=np.bool)
+
+        }, reward, (diff_result["score"] <= (self.initial_score / 3) and diff_result['score'] >= 0) or self.n_steps_since_last_reset == 1000 or (diff_result["score"] <= 100 and diff_result['score'] >= 0), False, diff_result
 
     def render(self, mode='console'):
         pass
@@ -467,7 +499,25 @@ class DecompilationEnv(gym.Env):
             return self.reset()
 
         self.best_score = self.initial_score
-        return np.array([self.initial_score]).astype(np.float32), None
+        diff_rows = compile_and_update(0, diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o, True)["rows"]
+        for row in diff_rows:
+            if "base" not in row:
+                row["base"] = {"text": [{"text": ""}]}
+            if "current" not in row:
+                row["current"] = {"text": [{"text": ""}]}
+        diff_base_rows = [row["base"]["text"][0]['text'] for row in diff_rows]
+        diff_current_rows = [row["current"]["text"][0]['text'] for row in diff_rows]
+        diff_rows = list((diff_base_rows, diff_current_rows))
+        diff_rows_hash_diff_per_row = [hashlib.sha256((row[0].strip().encode("utf-8"))) == hashlib.sha256((row[1].strip().encode("utf-8"))) for row in diff_rows]
+        # resize the permutation so that when we convert it to a numpy array it is the same shape as (131072,)
+        code_c = code_c + " " * (131072 - len(code_c))
+        # do the same for the diff_rows_hash_diff_per_row
+        diff_rows_hash_diff_per_row = diff_rows_hash_diff_per_row + [True] * (8192 - len(diff_rows_hash_diff_per_row))
+        return {
+            "score": np.array([self.initial_score]),
+            "code": np.fromstring(code_c, dtype=np.uint8),
+            "diff": np.fromiter(diff_rows_hash_diff_per_row, dtype=np.bool)
+        }, {}
 
 from stable_baselines3.common.callbacks import BaseCallback
 
@@ -476,12 +526,12 @@ class TensorboardCallback(BaseCallback):
     Custom callback for plotting additional values in tensorboard.
     """
 
-    def __init__(self, env: DummyVecEnv, verbose=1):
+    def __init__(self, env, verbose=1):
         super(TensorboardCallback, self).__init__(verbose)
         self.env = env
     
     def _on_step(self) -> bool:
-        env = self.env.envs[0]
+        env = self.env
         try:
             self.logger.record("cur_permutation", env.code_state[env.current_code]["cur_permutation"])
             self.logger.record("score", env.code_state[env.current_code]["prev_score"])
@@ -498,11 +548,11 @@ class TensorboardCallback(BaseCallback):
 
 
 def test_env():
-    env = DummyVecEnv([lambda: DecompilationEnv(load_pkl())])
+    env = DecompilationEnv(load_pkl())
 
-    obs = env.reset()
+    obs, _ = env.reset()
 
-    model = PPO('MlpPolicy', env, verbose=1,
+    model = PPO('MultiInputPolicy', env, verbose=1,
                 tensorboard_log="./ppo_decomp_tensorboard/",
                 
     ).learn(50000, callback=TensorboardCallback(env))
