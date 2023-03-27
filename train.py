@@ -329,7 +329,7 @@ def load_pkl():
 import numpy as np
 from gym import spaces
 from stable_baselines3 import PPO, A2C
-import clang
+import clang, clang.cindex
 import pycparser
 import decomp_permuter.src.perm.perm as perm
 import decomp_permuter.src.perm.parse as parse
@@ -455,10 +455,13 @@ class DecompilationEnv(gym.Env):
             self.code_state[self.current_code]["strength"] = 1000
         diff_result["last_permutation"] = permutation
         open("tmp.c", 'w').write(permutation)
+        # clang-format tmp.c
+        subprocess.run(["clang-format", "tmp.c", "-i"])
         self.n_steps_since_last_reset += 1
         if diff_result["score"] < self.best_score:
             self.best_score = diff_result["score"]
-        display_diff(diff_result if "rows" in diff_result else {"rows": []})
+        if "rows" in diff_result:
+            display_diff(diff_result)
         self.n_steps += 1
         diff_rows = diff_result["rows"] if "rows" in diff_result else [
             {"base": {"text": [{"text": ""}]}},
