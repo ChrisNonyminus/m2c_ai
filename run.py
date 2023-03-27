@@ -34,242 +34,32 @@ def scrape_scratches(url = "https://decomp.me/api/scratch", scratches_list : lis
         scratches_list = scrape_scratches(next_url, scratches_list, recursion_depth - 1)
     return scratches_list
 
-class DiffWrapper:
-    @staticmethod
-    def filter_objdump_flags(compiler_flags: str) -> str:
-        # Remove irrelevant flags that are part of the base objdump configs, but clutter the compiler settings field.
-        # TODO: use cfg for this?
-        skip_flags_with_args: set[str] = set()
-        skip_flags = {
-            "--disassemble",
-            "--disassemble-zeroes",
-            "--line-numbers",
-            "--reloc",
-        }
+def get_scratch(slug):
+    scratch = jsonpickle.decode(requests.get("https://decomp.me/api/scratch" + "/" + slug).text)
+    with open("zips/" + scratch['slug'] + ".zip", 'wb') as f:
+        f.write(requests.get("https://decomp.me/api/scratch" + "/" + scratch['slug'] + "/export").content)
+    with zipfile.ZipFile("zips/" + scratch['slug'] + ".zip", mode="r") as archive:
+        ctx_c = archive.read("ctx.c").decode("utf-8") if "ctx.c" in archive.namelist() else ""
+        code_c = archive.read('code.c').decode("utf-8")
+        target_s = archive.read('target.s').decode('utf-8')
+        target_o = archive.read('target.o')
+        diff_label = scratch['name']
+        platform = scratch['platform']
+        compiler = scratch['compiler']
+        compiler_flags = jsonpickle.decode(requests.get("https://decomp.me/api/scratch" + "/" + scratch['slug']).text)['compiler_flags']
+        return (diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o)
 
-        skip_next = False
-        flags = []
-        for flag in compiler_flags.split():
-            if skip_next:
-                skip_next = False
-                continue
-            if flag in skip_flags:
-                continue
-            if flag in skip_flags_with_args:
-                skip_next = True
-                continue
-            if any(flag.startswith(f) for f in skip_flags_with_args):
-                continue
-            flags.append(flag)
-        return " ".join(flags)
+def get_most_recent_slug(url = "https://decomp.me/api/scratch"):
+    scratches = jsonpickle.decode(requests.get(url).text)
+    next_url = scratches['next']
+    for result in scratches["results"]:
+        if result['platform'] in ['n64', 'ps1'] and (result['score'] >= 300 and result['score'] < 1000) and "gcc" in result['compiler']:
+            return result['slug']
+    return get_most_recent_slug(next_url)
 
-    @staticmethod
-    def create_config(
-        arch: asmdiffer.ArchSettings, diff_flags: List[str]
-    ) -> asmdiffer.Config:
-        show_rodata_refs = "-DIFFno_show_rodata_refs" not in diff_flags
-        algorithm = "difflib" if "-DIFFdifflib" in diff_flags else "levenshtein"
+from diff_wrapper import DiffWrapper
 
-        return asmdiffer.Config(
-            arch=arch,
-            # Build/objdump options
-            diff_obj=True,
-            objfile="",
-            make=False,
-            source_old_binutils=True,
-            diff_section=".text",
-            inlines=False,
-            max_function_size_lines=25000,
-            max_function_size_bytes=25000 * 4,
-            # Display options
-            formatter=asmdiffer.JsonFormatter(arch_str=arch.name),
-            diff_mode=asmdiffer.DiffMode.NORMAL,
-            base_shift=0,
-            skip_lines=0,
-            compress=None,
-            show_branches=True,
-            show_line_numbers=False,
-            show_source=False,
-            stop_at_ret=False,
-            ignore_large_imms=False,
-            ignore_addr_diffs=True,
-            algorithm=algorithm,
-            reg_categories={},
-            show_rodata_refs=show_rodata_refs,
-        )
-
-    @staticmethod
-    def get_objdump_target_function_flags(
-        sandbox_path : Path, target_path: Path, platform: Platform, label: str
-    ) -> List[str]:
-        if not label:
-            return ["--start-address=0"]
-
-        if platform.supports_objdump_disassemble:
-            return [f"--disassemble={label}"]
-
-        if not platform.nm_cmd:
-            raise NmError(f"No nm command for {platform.id}")
-
-        try:
-            nm_proc = subprocess.run(
-                " ".join([platform.nm_cmd] + [str((target_path))]), shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
-            )
-        except subprocess.TimeoutExpired as e:
-            raise NmError("Timeout expired")
-        except subprocess.CalledProcessError as e:
-            raise NmError.from_process_error(e)
-
-        if nm_proc.stdout:
-            # e.g.
-            # 00000000 T osEepromRead
-            #          U osMemSize
-            for line in nm_proc.stdout.splitlines():
-                nm_line = line.split()
-                if len(nm_line) == 3 and label == nm_line[2]:
-                    start_addr = int(nm_line[0], 16)
-                    return [f"--start-address={start_addr}"]
-
-        return ["--start-address=0"]
-
-    @staticmethod
-    def parse_objdump_flags(diff_flags: List[str]) -> List[str]:
-        known_objdump_flags = ["-Mreg-names=32", "-Mno-aliases"]
-        ret = []
-
-        for flag in known_objdump_flags:
-            if flag in diff_flags:
-                ret.append(flag)
-
-        return ret
-
-    @staticmethod
-    def run_objdump(
-        target_data: bytes,
-        platform: Platform,
-        config: asmdiffer.Config,
-        label: str,
-        flags: List[str],
-    ) -> str:
-        flags = [flag for flag in flags if not flag.startswith(ASMDIFF_FLAG_PREFIX)]
-        flags += [
-            "--disassemble",
-            "--disassemble-zeroes",
-            "--line-numbers",
-            "--reloc",
-        ]
-        
-        sandbox_temp_dir = TemporaryDirectory()
-        sandbox_path = Path(sandbox_temp_dir.name)
-        if True:
-            target_path = sandbox_path / "target.o"
-            target_path.write_bytes(target_data)
-
-            flags += DiffWrapper.get_objdump_target_function_flags(
-                sandbox_path, target_path, platform, label
-            )
-
-            flags += config.arch.arch_flags
-
-            if platform.objdump_cmd:
-                try:
-                    return subprocess.run(
-                        " ".join(platform.objdump_cmd.split()
-                        + flags
-                        + [str(target_path)]),
-                        shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
-                    ).stdout.decode("utf-8")
-                except subprocess.TimeoutExpired as e:
-                    raise ObjdumpError("Timeout expired")
-                except subprocess.CalledProcessError as e:
-                    raise ObjdumpError.from_process_error(e)
-            else:
-                raise ObjdumpError(f"No objdump command for {platform.id}")
-
-        return out
-
-    @staticmethod
-    def get_dump(
-        elf_object: bytes,
-        platform: Platform,
-        diff_label: str,
-        config: asmdiffer.Config,
-        diff_flags: List[str],
-    ) -> str:
-        if len(elf_object) == 0:
-            raise AssemblyError("Asm empty")
-
-        try:
-            basedump = DiffWrapper.run_objdump(
-                elf_object, platform, config, diff_label, diff_flags
-            )
-        except ObjdumpError as e:
-            print(e)
-        if not basedump:
-            raise ObjdumpError("Error running objdump")
-
-        # Preprocess the dump
-        try:
-            basedump = asmdiffer.preprocess_objdump_out(
-                None, elf_object, basedump, config
-            )
-        except AssertionError as e:
-            logger.exception("Error preprocessing dump")
-            raise DiffError(f"Error preprocessing dump: {e}")
-        except Exception as e:
-            raise DiffError(f"Error preprocessing dump: {e}")
-
-        return basedump
-
-    @staticmethod
-    def diff(
-        target_o : bytes,
-        platform: Platform,
-        diff_label: str,
-        compiled_elf: bytes,
-        diff_flags: List[str],
-    ) -> DiffResult:
-
-        try:
-            arch = asmdiffer.get_arch(platform.arch or "")
-        except ValueError:
-            logger.error(f"Unsupported arch: {platform.arch}. Continuing assuming mips")
-            arch = asmdiffer.get_arch("mips")
-
-        objdump_flags = DiffWrapper.parse_objdump_flags(diff_flags)
-
-        config = DiffWrapper.create_config(arch, diff_flags)
-
-        basedump = DiffWrapper.get_dump(
-            target_o,
-            platform,
-            diff_label,
-            config,
-            objdump_flags,
-        )
-        try:
-            mydump = DiffWrapper.get_dump(
-                compiled_elf, platform, diff_label, config, objdump_flags
-            )
-        except Exception as e:
-            mydump = ""
-
-        try:
-            display = asmdiffer.Display(basedump, mydump, config)
-        except Exception as e:
-            raise DiffError(f"Error running asm-differ: {e}")
-        
-        try:
-            # TODO: It would be nice to get a python object from `run_diff()` to avoid the
-            # JSON roundtrip. See https://github.com/simonlindholm/asm-differ/issues/56
-            result = json.loads(display.run_diff()[0])
-            result["error"] = None
-        except Exception as e:
-            raise DiffError(f"Error running asm-differ: {e}")
-
-        return result
-
-def make_pkl():
+def prepare_dataset():
     pickle.dump(scrape_scratches(), open("training.pkl", "wb"))
 
 def download_compilers():
@@ -379,11 +169,11 @@ class DecompilationEnv(gym.Env):
         self.best_score = self.initial_score
         self.n_steps_since_last_reset = 0
         self.n_steps = 0
+        self.scratch : tuple = None
 
     def step(self, action):
         print('action', action)
-        diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o = self.training_data[self.current_code]
-        observation_space = self.observation_space
+        diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o = self.training_data[self.current_code] if self.scratch is None else self.scratch
         # permute the code
         if self.current_code in self.code_state:
             prev_score = self.code_state[self.current_code]["prev_score"]
@@ -497,7 +287,7 @@ class DecompilationEnv(gym.Env):
             "target_asm": target_asm,
             "current_asm": current_asm,
 
-        }, reward, (diff_result["score"] <= (self.initial_score / 3) and diff_result['score'] >= 0) or self.n_steps_since_last_reset == 1000 or (diff_result["score"] <= 100 and diff_result['score'] >= 0), False, diff_result
+        }, reward, (diff_result["score"] <= (self.initial_score / 4) and diff_result['score'] >= 0) or self.n_steps_since_last_reset == 1000 or (diff_result["score"] <= 100 and diff_result['score'] >= 0), False, diff_result
 
     def render(self, mode='console'):
         pass
@@ -505,52 +295,83 @@ class DecompilationEnv(gym.Env):
     def close(self):
         pass
 
-    def reset(self):
-        if self.n_steps > 0:
-            if self.current_code not in self.code_state or "strength" not in self.code_state[self.current_code]:
-                #self.strength_total = 0
-                pass
+    def reset(self, scratch : tuple = None):
+        if scratch is None:
+            if self.n_steps > 0:
+                if self.current_code not in self.code_state or "strength" not in self.code_state[self.current_code]:
+                    #self.strength_total = 0
+                    pass
+                else:
+                    self.strength_total += self.code_state[self.current_code]["strength"]
             else:
-                self.strength_total += self.code_state[self.current_code]["strength"]
-        else:
-            self.strength_total = 0
-        self.code_state.pop(self.current_code, None)
-        self.current_code = random.randint(0, len(self.training_data) - 1)
-        diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o = self.training_data[self.current_code]
-        if len(target_o) > 2048:
-            return self.reset()
-        self.n_steps_since_last_reset = 0
-        if ("extern ? " in code_c):
-            return self.reset()
-        try:
-            self.initial_score = compile_and_update(0, diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o, True)["score"]
-        except:
-            return self.reset()
+                self.strength_total = 0
+            self.code_state.pop(self.current_code, None)
+            self.current_code = random.randint(0, len(self.training_data) - 1)
+            diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o = self.training_data[self.current_code]
+            if len(target_o) > 2048:
+                return self.reset()
+            self.n_steps_since_last_reset = 0
+            if ("extern ? " in code_c):
+                return self.reset()
+            try:
+                self.initial_score = compile_and_update(0, diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o, True)["score"]
+            except:
+                return self.reset()
 
-        self.best_score = self.initial_score
-        diff_rows = compile_and_update(0, diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o, True)["rows"]
-        for row in diff_rows:
-            if "base" not in row:
-                row["base"] = {"text": [{"text": ""}]}
-            if "current" not in row:
-                row["current"] = {"text": [{"text": ""}]}
-        diff_base_rows = [row["base"]["text"][0]['text'] for row in diff_rows]
-        diff_current_rows = [row["current"]["text"][0]['text'] for row in diff_rows]
-        diff_rows = list((diff_base_rows, diff_current_rows))
-        diff_rows_hash_diff_per_row = [hashlib.sha256((row[0].strip().encode("utf-8"))) == hashlib.sha256((row[1].strip().encode("utf-8"))) for row in diff_rows]
-        # resize the permutation so that when we convert it to a numpy array it is the same shape as (131072,)
-        code_c = code_c + " " * (131072 - len(code_c))
-        # do the same for the diff_rows_hash_diff_per_row
-        diff_rows_hash_diff_per_row = diff_rows_hash_diff_per_row + [True] * (8192 - len(diff_rows_hash_diff_per_row))
-        return {
-            "score": np.array([self.initial_score]),
-            "code": np.fromstring(code_c, dtype=np.uint8),
-            "diff": np.fromiter(diff_rows_hash_diff_per_row, dtype=np.bool),
-            "target_asm": np.fromstring("\n".join(diff_base_rows) + " " * (131072 - len("\n".join(diff_base_rows))), dtype=np.uint8),
-            "current_asm": np.fromstring("\n".join(diff_current_rows) + " " * (131072 - len("\n".join(diff_current_rows))), dtype=np.uint8),
-        }, {
-            "strength": self.strength_total,
-        }
+            self.best_score = self.initial_score
+            diff_rows = compile_and_update(0, diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o, True)["rows"]
+            for row in diff_rows:
+                if "base" not in row:
+                    row["base"] = {"text": [{"text": ""}]}
+                if "current" not in row:
+                    row["current"] = {"text": [{"text": ""}]}
+            diff_base_rows = [row["base"]["text"][0]['text'] for row in diff_rows]
+            diff_current_rows = [row["current"]["text"][0]['text'] for row in diff_rows]
+            diff_rows = list((diff_base_rows, diff_current_rows))
+            diff_rows_hash_diff_per_row = [hashlib.sha256((row[0].strip().encode("utf-8"))) == hashlib.sha256((row[1].strip().encode("utf-8"))) for row in diff_rows]
+            # resize the permutation so that when we convert it to a numpy array it is the same shape as (131072,)
+            code_c = code_c + " " * (131072 - len(code_c))
+            # do the same for the diff_rows_hash_diff_per_row
+            diff_rows_hash_diff_per_row = diff_rows_hash_diff_per_row + [True] * (8192 - len(diff_rows_hash_diff_per_row))
+            return {
+                "score": np.array([self.initial_score]),
+                "code": np.fromstring(code_c, dtype=np.uint8),
+                "diff": np.fromiter(diff_rows_hash_diff_per_row, dtype=np.bool),
+                "target_asm": np.fromstring("\n".join(diff_base_rows) + " " * (131072 - len("\n".join(diff_base_rows))), dtype=np.uint8),
+                "current_asm": np.fromstring("\n".join(diff_current_rows) + " " * (131072 - len("\n".join(diff_current_rows))), dtype=np.uint8),
+            }, {
+                "strength": self.strength_total,
+            }
+        else:
+            self.scratch = scratch
+            self.current_code = 0
+            diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o = scratch
+            self.initial_score = compile_and_update(0, diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o, True)["score"]
+            self.best_score = self.initial_score
+            diff_rows = compile_and_update(0, diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o, True)["rows"]
+            for row in diff_rows:
+                if "base" not in row:
+                    row["base"] = {"text": [{"text": ""}]}
+                if "current" not in row:
+                    row["current"] = {"text": [{"text": ""}]}
+            diff_base_rows = [row["base"]["text"][0]['text'] for row in diff_rows]
+            diff_current_rows = [row["current"]["text"][0]['text'] for row in diff_rows]
+            diff_rows = list((diff_base_rows, diff_current_rows))
+            diff_rows_hash_diff_per_row = [hashlib.sha256((row[0].strip().encode("utf-8"))) == hashlib.sha256((row[1].strip().encode("utf-8"))) for row in diff_rows]
+            # resize the permutation so that when we convert it to a numpy array it is the same shape as (131072,)
+            code_c = code_c + " " * (131072 - len(code_c))
+            # do the same for the diff_rows_hash_diff_per_row
+            diff_rows_hash_diff_per_row = diff_rows_hash_diff_per_row + [True] * (8192 - len(diff_rows_hash_diff_per_row))
+            return {
+                "score": np.array([self.initial_score]),
+                "code": np.fromstring(code_c, dtype=np.uint8),
+                "diff": np.fromiter(diff_rows_hash_diff_per_row, dtype=np.bool),
+                "target_asm": np.fromstring("\n".join(diff_base_rows) + " " * (131072 - len("\n".join(diff_base_rows))), dtype=np.uint8),
+                "current_asm": np.fromstring("\n".join(diff_current_rows) + " " * (131072 - len("\n".join(diff_current_rows))), dtype=np.uint8),
+            }, {
+                "strength": self.strength_total,
+            }
+
 
 from stable_baselines3.common.callbacks import BaseCallback
 
@@ -602,21 +423,47 @@ def continue_training():
     ).learn(50000, callback=TensorboardCallback(env))
     model.save("ppo_decomp")
 
+def run_on_scratch(scratch : tuple, do_next_if_done : bool = False):
+    env = DecompilationEnv(load_pkl())
+    env.scratch = scratch
+    obs, _ = env.reset(scratch)
+    model = PPO.load("ppo_decomp", env=env, verbose=1)
+    while True:
+        action, _states = model.predict(obs)
+        obs, rewards, done, trunc, info = env.step(action)
+        if info["score"] <= 100:
+            if do_next_if_done:
+                obs, _ = env.reset(get_scratch(get_most_recent_slug()))
+            else:
+                break
+    return env.code_state[env.current_code]["cur_permutation"]
+
+
 import argparse
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--command', type=str, choices=['train', 'make_pkl', 'download_compilers'])
+    parser.add_argument('--command', type=str, choices=['train', 'prepare_dataset', 'download_compilers', 'run'])
+    parser.add_argument('--scratch', type=str, default=None)
+    parser.add_argument('--do_next_if_done', type=bool, default=False)
     args = parser.parse_args()
     if args.command == 'train':
         if os.path.exists("ppo_decomp.zip"):
             continue_training()
         else:
             test_env()
-    elif args.command == 'make_pkl':
-        make_pkl()
+    elif args.command == 'prepare_dataset':
+        prepare_dataset()
     elif args.command == 'download_compilers':
         download_compilers()
+    elif args.command == 'run':
+        if os.path.exists("ppo_decomp.zip"):
+            if args.scratch is not None:
+                print(run_on_scratch(get_scratch(args.scratch), args.do_next_if_done))
+            else:
+                (run_on_scratch(get_scratch(get_most_recent_slug()), args.do_next_if_done))
+        else:
+            print("No model found. Please train first.")
     else:
         parser.print_help()
 

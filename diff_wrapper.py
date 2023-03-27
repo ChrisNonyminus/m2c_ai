@@ -1,0 +1,240 @@
+
+import json
+
+from compilers.compiler_defs import *
+import asmdiffer.diff as asmdiffer
+
+class DiffWrapper:
+    @staticmethod
+    def filter_objdump_flags(compiler_flags: str) -> str:
+        # Remove irrelevant flags that are part of the base objdump configs, but clutter the compiler settings field.
+        # TODO: use cfg for this?
+        skip_flags_with_args: set[str] = set()
+        skip_flags = {
+            "--disassemble",
+            "--disassemble-zeroes",
+            "--line-numbers",
+            "--reloc",
+        }
+
+        skip_next = False
+        flags = []
+        for flag in compiler_flags.split():
+            if skip_next:
+                skip_next = False
+                continue
+            if flag in skip_flags:
+                continue
+            if flag in skip_flags_with_args:
+                skip_next = True
+                continue
+            if any(flag.startswith(f) for f in skip_flags_with_args):
+                continue
+            flags.append(flag)
+        return " ".join(flags)
+
+    @staticmethod
+    def create_config(
+        arch: asmdiffer.ArchSettings, diff_flags: List[str]
+    ) -> asmdiffer.Config:
+        show_rodata_refs = "-DIFFno_show_rodata_refs" not in diff_flags
+        algorithm = "difflib" if "-DIFFdifflib" in diff_flags else "levenshtein"
+
+        return asmdiffer.Config(
+            arch=arch,
+            # Build/objdump options
+            diff_obj=True,
+            objfile="",
+            make=False,
+            source_old_binutils=True,
+            diff_section=".text",
+            inlines=False,
+            max_function_size_lines=25000,
+            max_function_size_bytes=25000 * 4,
+            # Display options
+            formatter=asmdiffer.JsonFormatter(arch_str=arch.name),
+            diff_mode=asmdiffer.DiffMode.NORMAL,
+            base_shift=0,
+            skip_lines=0,
+            compress=None,
+            show_branches=True,
+            show_line_numbers=False,
+            show_source=False,
+            stop_at_ret=False,
+            ignore_large_imms=False,
+            ignore_addr_diffs=True,
+            algorithm=algorithm,
+            reg_categories={},
+            show_rodata_refs=show_rodata_refs,
+        )
+
+    @staticmethod
+    def get_objdump_target_function_flags(
+        sandbox_path : Path, target_path: Path, platform: Platform, label: str
+    ) -> List[str]:
+        if not label:
+            return ["--start-address=0"]
+
+        if platform.supports_objdump_disassemble:
+            return [f"--disassemble={label}"]
+
+        if not platform.nm_cmd:
+            raise NmError(f"No nm command for {platform.id}")
+
+        try:
+            nm_proc = subprocess.run(
+                " ".join([platform.nm_cmd] + [str((target_path))]), shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+            )
+        except subprocess.TimeoutExpired as e:
+            raise NmError("Timeout expired")
+        except subprocess.CalledProcessError as e:
+            raise NmError.from_process_error(e)
+
+        if nm_proc.stdout:
+            # e.g.
+            # 00000000 T osEepromRead
+            #          U osMemSize
+            for line in nm_proc.stdout.splitlines():
+                nm_line = line.split()
+                if len(nm_line) == 3 and label == nm_line[2]:
+                    start_addr = int(nm_line[0], 16)
+                    return [f"--start-address={start_addr}"]
+
+        return ["--start-address=0"]
+
+    @staticmethod
+    def parse_objdump_flags(diff_flags: List[str]) -> List[str]:
+        known_objdump_flags = ["-Mreg-names=32", "-Mno-aliases"]
+        ret = []
+
+        for flag in known_objdump_flags:
+            if flag in diff_flags:
+                ret.append(flag)
+
+        return ret
+
+    @staticmethod
+    def run_objdump(
+        target_data: bytes,
+        platform: Platform,
+        config: asmdiffer.Config,
+        label: str,
+        flags: List[str],
+    ) -> str:
+        flags = [flag for flag in flags if not flag.startswith(ASMDIFF_FLAG_PREFIX)]
+        flags += [
+            "--disassemble",
+            "--disassemble-zeroes",
+            "--line-numbers",
+            "--reloc",
+        ]
+        
+        sandbox_temp_dir = TemporaryDirectory()
+        sandbox_path = Path(sandbox_temp_dir.name)
+        if True:
+            target_path = sandbox_path / "target.o"
+            target_path.write_bytes(target_data)
+
+            flags += DiffWrapper.get_objdump_target_function_flags(
+                sandbox_path, target_path, platform, label
+            )
+
+            flags += config.arch.arch_flags
+
+            if platform.objdump_cmd:
+                try:
+                    return subprocess.run(
+                        " ".join(platform.objdump_cmd.split()
+                        + flags
+                        + [str(target_path)]),
+                        shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+                    ).stdout.decode("utf-8")
+                except subprocess.TimeoutExpired as e:
+                    raise ObjdumpError("Timeout expired")
+                except subprocess.CalledProcessError as e:
+                    raise ObjdumpError.from_process_error(e)
+            else:
+                raise ObjdumpError(f"No objdump command for {platform.id}")
+
+        return out
+
+    @staticmethod
+    def get_dump(
+        elf_object: bytes,
+        platform: Platform,
+        diff_label: str,
+        config: asmdiffer.Config,
+        diff_flags: List[str],
+    ) -> str:
+        if len(elf_object) == 0:
+            raise AssemblyError("Asm empty")
+
+        try:
+            basedump = DiffWrapper.run_objdump(
+                elf_object, platform, config, diff_label, diff_flags
+            )
+        except ObjdumpError as e:
+            print(e)
+        if not basedump:
+            raise ObjdumpError("Error running objdump")
+
+        # Preprocess the dump
+        try:
+            basedump = asmdiffer.preprocess_objdump_out(
+                None, elf_object, basedump, config
+            )
+        except AssertionError as e:
+            logger.exception("Error preprocessing dump")
+            raise DiffError(f"Error preprocessing dump: {e}")
+        except Exception as e:
+            raise DiffError(f"Error preprocessing dump: {e}")
+
+        return basedump
+
+    @staticmethod
+    def diff(
+        target_o : bytes,
+        platform: Platform,
+        diff_label: str,
+        compiled_elf: bytes,
+        diff_flags: List[str],
+    ) -> DiffResult:
+
+        try:
+            arch = asmdiffer.get_arch(platform.arch or "")
+        except ValueError:
+            logger.error(f"Unsupported arch: {platform.arch}. Continuing assuming mips")
+            arch = asmdiffer.get_arch("mips")
+
+        objdump_flags = DiffWrapper.parse_objdump_flags(diff_flags)
+
+        config = DiffWrapper.create_config(arch, diff_flags)
+
+        basedump = DiffWrapper.get_dump(
+            target_o,
+            platform,
+            diff_label,
+            config,
+            objdump_flags,
+        )
+        try:
+            mydump = DiffWrapper.get_dump(
+                compiled_elf, platform, diff_label, config, objdump_flags
+            )
+        except Exception as e:
+            mydump = ""
+
+        try:
+            display = asmdiffer.Display(basedump, mydump, config)
+        except Exception as e:
+            raise DiffError(f"Error running asm-differ: {e}")
+        
+        try:
+            # TODO: It would be nice to get a python object from `run_diff()` to avoid the
+            # JSON roundtrip. See https://github.com/simonlindholm/asm-differ/issues/56
+            result = json.loads(display.run_diff()[0])
+            result["error"] = None
+        except Exception as e:
+            raise DiffError(f"Error running asm-differ: {e}")
+
+        return result
