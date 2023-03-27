@@ -13,7 +13,7 @@ from compilers.compiler_defs import *
 import asmdiffer.diff as asmdiffer
 
 
-def scrape_scratches(url = "https://decomp.me/api/scratch", scratches_list : list[tuple] = [], recursion_depth = 100):
+def scrape_scratches(url = "https://decomp.me/api/scratch", scratches_list : list[tuple] = [], recursion_depth = 500):
     scratches = jsonpickle.decode(requests.get(url).text)
     next_url = scratches['next']
     for result in scratches["results"]:
