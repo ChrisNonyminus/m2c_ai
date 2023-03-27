@@ -96,8 +96,8 @@ def compile_and_update(prev_score, diff_label, platform, ctx_c, code_c, target_s
             raise e
         else:
             return {
-                "score": 10000,
-                "reward": prev_score - 10000,
+                "score": prev_score,
+                "reward": 0,
             }
     
     diff = diff_compilation(diff_label, platform, target_o, compilation)
@@ -159,10 +159,10 @@ class DecompilationEnv(gym.Env):
         # base (row["base"]["text"]) vs current (row["base"]["text"]) for each row in diff_result["rows"]
         self.observation_space = spaces.Dict({
             "score": spaces.Box(low=0, high=100000, shape=(1,), dtype=np.float32),
-            "code": spaces.Box(low=0, high=100000, shape=(131072,), dtype=np.float32),
-            "diff": spaces.Box(low=0, high=100000, shape=(8192,), dtype=np.float32),
-            "target_asm": spaces.Box(low=0, high=100000, shape=(131072,), dtype=np.float32),
-            "current_asm": spaces.Box(low=0, high=100000, shape=(131072,), dtype=np.float32),
+            "code": spaces.Box(low=0, high=100000, shape=(131072,), dtype=np.uint8),
+            "diff": spaces.Box(low=0, high=100000, shape=(8192,), dtype=np.bool),
+            "target_asm": spaces.Box(low=0, high=100000, shape=(131072,), dtype=np.uint8),
+            "current_asm": spaces.Box(low=0, high=100000, shape=(131072,), dtype=np.uint8),
         })
         self.current_code = random.randint(0, len(training_data) - 1)
         self.code_state : dict[int, dict[str, Any]] = {}
@@ -392,6 +392,14 @@ class TensorboardCallback(BaseCallback):
             self.logger.record("score", env.code_state[env.current_code]["prev_score"])
             self.logger.record("strength", env.strength_total + env.code_state[env.current_code]["strength"]) # positive=good, negative=bad
             self.logger.dump(step=self.num_timesteps)
+            # save an analysis of this model's current parameters
+            if self.num_timesteps % 100 == 0:
+                with open("analysis.txt", "w") as f:
+                    f.write("num_timesteps:\n\t" + str(self.num_timesteps) + "\n")
+                    parameters = self.model.get_parameters()
+                    for key in parameters:
+                        f.write(key + ":\n\t" + str(parameters[key]) + "\n")
+                    
         except:
             pass
         # save model every 1000 steps
