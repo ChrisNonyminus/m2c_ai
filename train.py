@@ -359,6 +359,8 @@ class DecompilationEnv(gym.Env):
             "score": spaces.Box(low=0, high=100000, shape=(1,), dtype=np.float32),
             "code": spaces.Box(low=0, high=100000, shape=(131072,), dtype=np.float32),
             "diff": spaces.Box(low=0, high=100000, shape=(8192,), dtype=np.float32),
+            "target_asm": spaces.Box(low=0, high=100000, shape=(131072,), dtype=np.float32),
+            "current_asm": spaces.Box(low=0, high=100000, shape=(131072,), dtype=np.float32),
         })
         self.current_code = random.randint(0, len(training_data) - 1)
         self.code_state : dict[int, dict[str, Any]] = {}
@@ -464,10 +466,18 @@ class DecompilationEnv(gym.Env):
         # do the same for the diff_rows_hash_diff_per_row
         diff_rows_hash_diff_per_row = diff_rows_hash_diff_per_row + [True] * (8192 - len(diff_rows_hash_diff_per_row))
 
+        target_asm_str = "\n".join(diff_base_rows)  + " " * (131072 - len("\n".join(diff_base_rows)))
+        target_asm = np.fromstring(target_asm_str, dtype=np.uint8)
+
+        current_asm_str = "\n".join(diff_current_rows) + " " * (131072 - len("\n".join(diff_current_rows)))
+        current_asm = np.fromstring(current_asm_str, dtype=np.uint8)
+
         return {
             "score": np.array([diff_result["score"]]),
             "code": np.fromstring(permutation, dtype=np.uint8),
-            "diff": np.fromiter(diff_rows_hash_diff_per_row, dtype=np.bool)
+            "diff": np.fromiter(diff_rows_hash_diff_per_row, dtype=np.bool),
+            "target_asm": target_asm,
+            "current_asm": current_asm,
 
         }, reward, (diff_result["score"] <= (self.initial_score / 3) and diff_result['score'] >= 0) or self.n_steps_since_last_reset == 1000 or (diff_result["score"] <= 100 and diff_result['score'] >= 0), False, diff_result
 
@@ -516,7 +526,9 @@ class DecompilationEnv(gym.Env):
         return {
             "score": np.array([self.initial_score]),
             "code": np.fromstring(code_c, dtype=np.uint8),
-            "diff": np.fromiter(diff_rows_hash_diff_per_row, dtype=np.bool)
+            "diff": np.fromiter(diff_rows_hash_diff_per_row, dtype=np.bool),
+            "target_asm": np.fromstring("\n".join(diff_base_rows) + " " * (131072 - len("\n".join(diff_base_rows))), dtype=np.uint8),
+            "current_asm": np.fromstring("\n".join(diff_current_rows) + " " * (131072 - len("\n".join(diff_current_rows))), dtype=np.uint8),
         }, {}
 
 from stable_baselines3.common.callbacks import BaseCallback
