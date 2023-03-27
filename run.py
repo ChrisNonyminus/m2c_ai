@@ -392,13 +392,6 @@ class TensorboardCallback(BaseCallback):
             self.logger.record("score", env.code_state[env.current_code]["prev_score"])
             self.logger.record("strength", env.strength_total + env.code_state[env.current_code]["strength"]) # positive=good, negative=bad
             self.logger.dump(step=self.num_timesteps)
-            # save an analysis of this model's current parameters
-            if self.num_timesteps % 100 == 0:
-                with open("analysis.txt", "w") as f:
-                    f.write("num_timesteps:\n\t" + str(self.num_timesteps) + "\n")
-                    parameters = self.model.get_parameters()
-                    for key in parameters:
-                        f.write(key + ":\n\t" + str(parameters[key]) + "\n")
                     
         except:
             pass
