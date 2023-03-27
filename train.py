@@ -17,7 +17,7 @@ def scrape_scratches(url = "https://decomp.me/api/scratch", scratches_list : lis
     scratches = jsonpickle.decode(requests.get(url).text)
     next_url = scratches['next']
     for result in scratches["results"]:
-        if result['platform'] in ['n64', 'psx'] and (result['score'] >= 300 and result['score'] < 1000):
+        if result['platform'] in ['n64', 'ps1'] and (result['score'] >= 300 and result['score'] < 1000) and "gcc" in result['compiler']:
             compiler = result['compiler']
             compiler_flags = jsonpickle.decode(requests.get("https://decomp.me/api/scratch" + "/" + result['slug']).text)['compiler_flags']
             with open("zips/" + result['slug'] + ".zip", 'wb') as f:
@@ -474,7 +474,7 @@ class DecompilationEnv(gym.Env):
         current_asm_str = "\n".join(diff_current_rows) + " " * (131072 - len("\n".join(diff_current_rows)))
         current_asm_str = current_asm_str[:131072]
         current_asm = np.fromstring(current_asm_str, dtype=np.uint8)
-
+        diff_result["strength"] = self.strength_total + self.code_state[self.current_code]["strength"]
         return {
             "score": np.array([diff_result["score"]]),
             "code": np.fromstring(permutation, dtype=np.uint8),
@@ -532,7 +532,9 @@ class DecompilationEnv(gym.Env):
             "diff": np.fromiter(diff_rows_hash_diff_per_row, dtype=np.bool),
             "target_asm": np.fromstring("\n".join(diff_base_rows) + " " * (131072 - len("\n".join(diff_base_rows))), dtype=np.uint8),
             "current_asm": np.fromstring("\n".join(diff_current_rows) + " " * (131072 - len("\n".join(diff_current_rows))), dtype=np.uint8),
-        }, {}
+        }, {
+            "strength": self.strength_total,
+        }
 
 from stable_baselines3.common.callbacks import BaseCallback
 
