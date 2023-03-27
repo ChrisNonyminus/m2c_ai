@@ -60,7 +60,7 @@ def get_most_recent_slug(url = "https://decomp.me/api/scratch"):
 from diff_wrapper import DiffWrapper
 
 def prepare_dataset():
-    pickle.dump(scrape_scratches(), open("training.pkl", "wb"))
+    pickle.dump(scrape_scratches(), open("training.pkl", "wb"), load_pkl() if os.path.exists("training.pkl") else [])
 
 def download_compilers():
     download_n64()
