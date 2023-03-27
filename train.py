@@ -463,13 +463,16 @@ class DecompilationEnv(gym.Env):
         diff_rows_hash_diff_per_row = [hashlib.sha256((row[0].strip().encode("utf-8"))) == hashlib.sha256((row[1].strip().encode("utf-8"))) for row in diff_rows]
         # resize the permutation so that when we convert it to a numpy array it is the same shape as (131072,)
         permutation = permutation + " " * (131072 - len(permutation))
+        permutation = permutation[:131072]
         # do the same for the diff_rows_hash_diff_per_row
         diff_rows_hash_diff_per_row = diff_rows_hash_diff_per_row + [True] * (8192 - len(diff_rows_hash_diff_per_row))
 
         target_asm_str = "\n".join(diff_base_rows)  + " " * (131072 - len("\n".join(diff_base_rows)))
+        target_asm_str = target_asm_str[:131072]
         target_asm = np.fromstring(target_asm_str, dtype=np.uint8)
 
         current_asm_str = "\n".join(diff_current_rows) + " " * (131072 - len("\n".join(diff_current_rows)))
+        current_asm_str = current_asm_str[:131072]
         current_asm = np.fromstring(current_asm_str, dtype=np.uint8)
 
         return {
