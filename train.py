@@ -436,7 +436,7 @@ class DecompilationEnv(gym.Env):
         json.dump(diff_result, open('tmp.json','w'),indent=4)
         self.code_state[self.current_code]["prev_score"] = diff_result["score"]
         self.code_state[self.current_code]["strength"] = self.initial_score - diff_result["score"]
-        self.code_state[self.current_code]["last_permutation"] = permutation if (diff_result["score"] < prev_score and diff_result["score"] <= self.best_score) else code_c
+        self.code_state[self.current_code]["last_permutation"] = permutation if (diff_result["score"] < prev_score and diff_result["score"] < self.best_score) else code_c
         self.code_state[self.current_code]["cur_permutation"] = permutation
         reward = diff_result["reward"] + (self.code_state[self.current_code]["strength"] - self.strength_total) * 0.1
         if diff_result["score"] <= 100:
