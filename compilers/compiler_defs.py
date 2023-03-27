@@ -276,7 +276,7 @@ PSYQ_MSDOS_CC = (
     + '(HOME="." dosemu -quiet -dumb -f ${COMPILER_DIR}/dosemurc -K . -E "ASPSX.EXE -quiet object.os -o object.oo") && '
     + '${COMPILER_DIR}/psyq-obj-parser object.oo -o "$OUTPUT"'
 )
-PSYQ_CC = 'cpp -P "$INPUT" | unix2dos | ${WINE} ${COMPILER_DIR}/CC1PSX.EXE -quiet ${COMPILER_FLAGS} -o "$OUTPUT".s && ${WINE} ${COMPILER_DIR}/ASPSX.EXE -quiet "$OUTPUT".s -o "$OUTPUT".obj && ${COMPILER_DIR}/psyq-obj-parser "$OUTPUT".obj -o "$OUTPUT"'
+PSYQ_CC = 'cat "$INPUT" | unix2dos | ${WINE} ${COMPILER_DIR}/CC1PSX.EXE -quiet ${COMPILER_FLAGS} -o "$OUTPUT".s && ${WINE} ${COMPILER_DIR}/ASPSX.EXE -quiet "$OUTPUT".s -o "$OUTPUT".obj && ${COMPILER_DIR}/psyq-obj-parser "$OUTPUT".obj -o "$OUTPUT"'
 
 PSYQ35 = GCCPS1Compiler(
     id="psyq3.5",
@@ -560,8 +560,8 @@ class CompilerWrapper:
         code = code.replace("\r\n", "\n")
         context = context.replace("\r\n", "\n")
 
-        sandbox_temp_dir = TemporaryDirectory()
-        sandbox_path = Path(sandbox_temp_dir.name)
+        sandbox_temp_dir = "work/"
+        sandbox_path = Path(sandbox_temp_dir)
         if True:
             ext = compiler.language.get_file_extension()
             code_file = f"code.{ext}"
@@ -592,6 +592,7 @@ class CompilerWrapper:
             # Run compiler
             try:
                 st = round(time.time() * 1000)
+                print (cc_cmd)
                 compile_proc = subprocess.run(
                     [cc_cmd],
                     shell=True,

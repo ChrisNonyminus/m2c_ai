@@ -95,6 +95,7 @@ def compile_and_update(prev_score, diff_label, platform, ctx_c, code_c, target_s
         if initial:
             raise e
         else:
+            print("Compilation error, skipping")
             return {
                 "score": prev_score,
                 "reward": 0,
@@ -183,21 +184,20 @@ class DecompilationEnv(gym.Env):
         else:
             self.code_state[self.current_code] = {}
             base_compilation = compile_and_update(0, diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o)
-            if base_compilation['reward'] == -1: # compilation failed
-                return {}, 0, True, False, {}
             prev_score = base_compilation["score"]
             self.initial_score = prev_score
             code_c = ctx_c + "\n\n" + code_c
         with open("code.c", "w") as f:
             f.write(code_c)
-            try:
-                code_c = pycparser.preprocess_file("code.c", cpp_path="cpp", cpp_args=["-E", "-P", "-w"])
-            except:
-                return {}, 0, True, False, {}
+            f.flush()
+            if True:
+                try:
+                    code_c = pycparser.preprocess_file("code.c")
+                except:
+                    return {}, 0, True, False, {}
         code_perm = parse.perm_parse(code_c)
         eval_state = perm.EvalState()
-        try:
-            cand = candidate.Candidate.from_source(code_perm.evaluate(random.randint(0, code_perm.perm_count), eval_state), eval_state, diff_label,{
+        cand = candidate.Candidate.from_source(code_perm.evaluate(random.randint(0, code_perm.perm_count - 1), eval_state), eval_state, diff_label,{
     "perm_temp_for_expr": 100 if action == DecompilationEnv.ACTION_PERM_TEMP_FOR_EXPR else 0,
     "perm_expand_expr": 100 if action == DecompilationEnv.ACTION_PERM_EXPAND_EXPR else 0,
     "perm_reorder_stmts": 100 if action == DecompilationEnv.ACTION_PERM_REORDER_STMTS else 0,
@@ -230,9 +230,7 @@ class DecompilationEnv(gym.Env):
     "perm_pad_var_decl": 0,
     "perm_inline": 100 if action == DecompilationEnv.ACTION_PERM_INLINE else 0,
             },random.randint(0, 1000000))
-            cand.randomize_ast()
-        except:
-            return {}, 0, True, False, {}
+        cand.randomize_ast()
         permutation : str = cand.get_source()
         diff_result = compile_and_update(prev_score, diff_label, platform, "", permutation, target_s, compiler, compiler_flags, target_o)
         json.dump(diff_result, open('tmp.json','w'),indent=4)
@@ -281,6 +279,12 @@ class DecompilationEnv(gym.Env):
         current_asm_str = current_asm_str[:131072]
         current_asm = np.fromstring(current_asm_str, dtype=np.uint8)
         diff_result["strength"] = self.strength_total + self.code_state[self.current_code]["strength"]
+        if self.scratch is not None:
+            print("score:\t", diff_result['score'])
+            print("reward:\t", reward)
+            print("strength:\t", self.strength_total + self.code_state[self.current_code]["strength"])
+            print("best_score:\t", self.best_score)
+            print("n_steps:\t", self.n_steps)
         return {
             "score": np.array([diff_result["score"]]),
             "code": np.fromstring(permutation, dtype=np.uint8),
@@ -309,6 +313,11 @@ class DecompilationEnv(gym.Env):
             self.code_state.pop(self.current_code, None)
             self.current_code = random.randint(0, len(self.training_data) - 1)
             diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o = self.training_data[self.current_code]
+            with open("code.c", "w") as f:
+                f.write(code_c)
+                f.flush()
+            if True:
+                code_c = pycparser.preprocess_file("code.c")
             if len(target_o) > 2048:
                 return self.reset()
             self.n_steps_since_last_reset = 0
@@ -346,7 +355,13 @@ class DecompilationEnv(gym.Env):
         else:
             self.scratch = scratch
             self.current_code = 0
+            self.strength_total = 0
             diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o = scratch
+            with open("code.c", "w") as f:
+                f.write(code_c)
+                f.flush()
+            if True:
+                code_c = pycparser.preprocess_file("code.c")
             self.initial_score = compile_and_update(0, diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o, True)["score"]
             self.best_score = self.initial_score
             diff_rows = compile_and_update(0, diff_label, platform, ctx_c, code_c, target_s, compiler, compiler_flags, target_o, True)["rows"]
