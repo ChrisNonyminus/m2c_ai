@@ -329,7 +329,7 @@ class DecompilationEnv(gym.Env):
             diff_base_rows = [" ".join([text["text"] for text in row["base"]['text']]) for row in diff_rows]
             diff_current_rows = [" ".join([text["text"] for text in row["current"]['text']]) for row in diff_rows]
             diff_rows = list((diff_base_rows, diff_current_rows))
-            diff_rows_hash_diff_per_row = [hashlib.sha256((row[0].strip().encode("utf-8"))) == hashlib.sha256((row[1].strip().encode("utf-8"))) for row in diff_rows]
+            diff_rows_hash_diff_per_row = [hashlib.sha256((row[0].split(":")[1].strip().encode("utf-8"))) == hashlib.sha256((row[1].split(":")[1].strip().encode("utf-8"))) for row in diff_rows]
             # resize the permutation so that when we convert it to a numpy array it is the same shape as (131072,)
             code_c = code_c + " " * (131072 - len(code_c))
             # do the same for the diff_rows_hash_diff_per_row
@@ -358,7 +358,7 @@ class DecompilationEnv(gym.Env):
             diff_base_rows = [" ".join([text["text"] for text in row["base"]['text']]) for row in diff_rows]
             diff_current_rows = [" ".join([text["text"] for text in row["current"]['text']]) for row in diff_rows]
             diff_rows = list((diff_base_rows, diff_current_rows))
-            diff_rows_hash_diff_per_row = [hashlib.sha256((row[0].strip().encode("utf-8"))) == hashlib.sha256((row[1].strip().encode("utf-8"))) for row in diff_rows]
+            diff_rows_hash_diff_per_row = [hashlib.sha256((row[0].split(":")[1].strip().encode("utf-8"))) == hashlib.sha256((row[1].split(":")[1].strip().encode("utf-8"))) for row in diff_rows]
             # resize the permutation so that when we convert it to a numpy array it is the same shape as (131072,)
             code_c = code_c + " " * (131072 - len(code_c))
             # do the same for the diff_rows_hash_diff_per_row
