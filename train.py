@@ -339,7 +339,7 @@ class DecompilationEnv(gym.Env):
     ACTION_PERM_STRUCT_REF = 5
     ACTION_PERM_REORDER_DECLS = 6
     ACTION_PERM_INLINE = 7
-    ACTION_PERM_ADD_MASK = 8
+    ACTION_PERM_REORDER_STMTS = 8
     ACTION_PERM_COMMUTATIVE = 9
     ACTION_PERM_CAST_SIMPLE = 10
     ACTION_PERM_RANDOMIZE_FUNCTION_TYPE = 11
@@ -398,9 +398,9 @@ class DecompilationEnv(gym.Env):
             cand = candidate.Candidate.from_source(code_perm.evaluate(random.randint(0, code_perm.perm_count), eval_state), eval_state, diff_label,{
     "perm_temp_for_expr": 100 if action == DecompilationEnv.ACTION_PERM_TEMP_FOR_EXPR else 0,
     "perm_expand_expr": 100 if action == DecompilationEnv.ACTION_PERM_EXPAND_EXPR else 0,
-    "perm_reorder_stmts": 0,
+    "perm_reorder_stmts": 100 if action == DecompilationEnv.ACTION_PERM_REORDER_STMTS else 0,
     "perm_reorder_decls": 100 if action == DecompilationEnv.ACTION_PERM_REORDER_DECLS else 0,
-    "perm_add_mask": 100 if action == DecompilationEnv.ACTION_PERM_ADD_MASK else 0,
+    "perm_add_mask": 0,
     "perm_xor_zero": 0,
     "perm_cast_simple": 100 if action == DecompilationEnv.ACTION_PERM_CAST_SIMPLE else 0,
     "perm_refer_to_var": 100 if action == DecompilationEnv.ACTION_PERM_REFER_TO_VAR else 0,
@@ -436,7 +436,7 @@ class DecompilationEnv(gym.Env):
         json.dump(diff_result, open('tmp.json','w'),indent=4)
         self.code_state[self.current_code]["prev_score"] = diff_result["score"]
         self.code_state[self.current_code]["strength"] = self.initial_score - diff_result["score"]
-        self.code_state[self.current_code]["last_permutation"] = permutation if (diff_result["score"] < prev_score and diff_result["score"] < self.best_score) else code_c
+        self.code_state[self.current_code]["last_permutation"] = permutation if (diff_result["score"] < prev_score and diff_result["score"] <= self.best_score) else code_c
         self.code_state[self.current_code]["cur_permutation"] = permutation
         reward = diff_result["reward"] + (self.code_state[self.current_code]["strength"] - self.strength_total) * 0.1
         if diff_result["score"] <= 100:
